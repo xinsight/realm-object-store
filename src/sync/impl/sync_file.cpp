@@ -35,7 +35,7 @@ inline static int mkstemp(char* _template) { return _open(_mktemp(_template), _O
 #else
 #include <unistd.h>
 #endif
-
+#include <android/log.h>
 
 using File = realm::util::File;
 
@@ -198,27 +198,34 @@ std::string file_path_by_appending_extension(const std::string& path, const std:
 
 std::string create_timestamped_template(const std::string& prefix, int wildcard_count)
 {
+    __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>>create_timestamped_template");
     constexpr int WILDCARD_MAX = 20;
     constexpr int WILDCARD_MIN = 6;
     wildcard_count = std::min(WILDCARD_MAX, std::max(WILDCARD_MIN, wildcard_count));
     std::time_t time = std::time(nullptr);
     std::stringstream stream;
     stream << prefix << "-" << util::put_time(time, "%Y%m%d-%H%M%S") << "-" << std::string(wildcard_count, 'X');
+    __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>>stream %s", stream.str().c_str());
     return stream.str();
 }
 
 std::string reserve_unique_file_name(const std::string& path, const std::string& template_string)
-{
+{__android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>>reserve_unique_file_name path");
     REALM_ASSERT_DEBUG(template_string.find("XXXXXX") != std::string::npos);
     std::string path_buffer = file_path_by_appending_component(path, template_string, FilePathType::File);
+    __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>>reserve_unique_file_name path %s", path_buffer.c_str());
+
     int fd = mkstemp(&path_buffer[0]);
+    __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>>reserve_unique_file_name mkstemp  fd %d", fd);
     if (fd < 0) {
         int err = errno;
         throw std::system_error(err, std::system_category());
     }
     // Remove the file so we can use the name for our own file.
     close(fd);
+    __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>>reserve_unique_file_name close  fd %d", fd);
     unlink(path_buffer.c_str());
+    __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>>reserve_unique_file_name unlink  fd %d", fd);
     return path_buffer;
 }
 
@@ -275,13 +282,17 @@ void SyncFileManager::remove_user_directory(const std::string& user_identity) co
 
 bool SyncFileManager::remove_realm(const std::string& absolute_path) const
 {
+    __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>> remove_realm ");
     REALM_ASSERT(absolute_path.length() > 0);
     bool success = true;
     // Remove the base Realm file (e.g. "example.realm").
     success = File::try_remove(absolute_path);
+    __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>> try_remove realm %d ", success);
     // Remove the lock file (e.g. "example.realm.lock").
     auto lock_path = util::file_path_by_appending_extension(absolute_path, "lock");
+
     success = File::try_remove(lock_path);
+    __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>> try_remove lock_path %d ", success);
     // Remove the management directory (e.g. "example.realm.management").
     auto management_path = util::file_path_by_appending_extension(absolute_path, "management");
     try {
@@ -297,17 +308,28 @@ bool SyncFileManager::remove_realm(const std::string& absolute_path) const
 
 bool SyncFileManager::copy_realm_file_to_recovery_directory(const std::string& absolute_path, const std::string& new_name) const
 {
+    __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>>copy_realm_file_to_recovery_directory");
     REALM_ASSERT(absolute_path.length() > 0);
     try {
         auto new_path = util::file_path_by_appending_component(recovery_directory_path(), new_name);
         if (File::exists(new_path)) {
             return false;
         }
+        __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>>file doesn't exist copy absolute_path: %s new_name: %s", absolute_path.c_str(), new_name.c_str());
+
+        File origin_file{absolute_path, realm::util::File::Mode::mode_Read};  // Throws
+        __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>>original_file");
+        File target_file{new_path, realm::util::File::Mode::mode_Write}; // Throws
+        __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>>new_path");
+
         File::copy(absolute_path, std::move(new_path));
+        __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>> DONE ");
     } 
     catch (File::NotFound const&) {
+        __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>> File::NotFound ");
     }
     catch (File::AccessError const&) {
+        __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>> File::AccessError ");
         return false;
     }
     return true;

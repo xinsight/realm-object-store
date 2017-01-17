@@ -23,7 +23,7 @@
 #include "sync/impl/sync_metadata.hpp"
 #include "sync/sync_session.hpp"
 #include "sync/sync_user.hpp"
-
+#include <android/log.h>
 #include <thread>
 
 using namespace realm;
@@ -42,6 +42,7 @@ void SyncManager::configure_file_system(const std::string& base_file_path,
                                         util::Optional<std::vector<char>> custom_encryption_key,
                                         bool reset_metadata_on_error)
 {
+    __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>>configure_file_system %s", base_file_path.c_str());
     struct UserCreationData {
         std::string identity;
         std::string user_token;
@@ -95,11 +96,13 @@ void SyncManager::configure_file_system(const std::string& base_file_path,
             SyncFileActionMetadata file_action = file_actions.get(i);
             switch (file_action.action()) {
                 case SyncFileActionMetadata::Action::DeleteRealm:
+                    __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>>configure_file_system  DeleteRealm file_action.original_name() = %s", file_action.original_name().c_str());
                     // Delete all the files for the given Realm.
                     m_file_manager->remove_realm(file_action.original_name());
                     completed_actions.emplace_back(std::move(file_action));
                     break;
                 case SyncFileActionMetadata::Action::HandleRealmForClientReset:
+                    __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>>configure_file_system  HandleRealmForClientReset file_action.new_name()");
                     // Copy the primary Realm file to the recovery dir, and then delete the Realm.
                     auto new_name = file_action.new_name();
                     if (new_name && m_file_manager->copy_realm_file_to_recovery_directory(file_action.original_name(), *new_name)) {
@@ -110,6 +113,7 @@ void SyncManager::configure_file_system(const std::string& base_file_path,
             }
         }
         for (auto& action : completed_actions) {
+            __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>>configure_file_system  ACTION REMOVED");
             action.remove();
         }
         // Load persisted users into the users map.
@@ -361,6 +365,7 @@ std::string SyncManager::path_for_realm(const std::string& user_identity, const 
 
 std::string SyncManager::recovery_directory_path() const
 {
+    __android_log_print(ANDROID_LOG_VERBOSE, "JNI-RESET", ">>>>>>>>>>>>>>recovery_directory_path %d", (m_file_manager)?10:20);
     std::lock_guard<std::mutex> lock(m_file_system_mutex);
     REALM_ASSERT(m_file_manager);
     return m_file_manager->recovery_directory_path();        
