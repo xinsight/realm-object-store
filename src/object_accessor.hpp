@@ -33,6 +33,10 @@
 #include <realm/util/assert.hpp>
 #include <realm/table_view.hpp>
 
+#if REALM_ENABLE_SYNC
+#include <realm/sync/object.hpp>
+#endif // REALM_ENABLE_SYNC
+
 #include <string>
 
 namespace realm {
@@ -189,8 +193,9 @@ Object Object::create(ContextType& ctx, std::shared_ptr<Realm> const& realm,
         row_index = get_for_primary_key_impl(ctx, *table, *primary_prop, *primary_value);
 
         if (row_index == realm::not_found) {
-            row_index = table->add_empty_row();
             created = true;
+#if 0
+<<<<<<< HEAD
             if (ctx.is_null(*primary_value)) {
                 if (primary_prop->type == PropertyType::Int)
                     table->set_null_unique(primary_prop->table_column, row_index);
@@ -203,6 +208,29 @@ Object Object::create(ContextType& ctx, std::shared_ptr<Realm> const& realm,
             else
                 table->set_unique(primary_prop->table_column, row_index,
                                   ctx.template unbox<StringData>(*primary_value));
+=======
+            if (primary_prop->type == PropertyType::Int) {
+#if REALM_ENABLE_SYNC
+                row_index = sync::create_object_with_primary_key(realm->read_group(), *table, Accessor::to_long(ctx, primary_value));
+#else
+                row_index = table->add_empty_row();
+                table->set_int_unique(primary_prop->table_column, row_index, Accessor::to_long(ctx, primary_value));
+#endif // REALM_ENABLE_SYNC
+            }
+            else if (primary_prop->type == PropertyType::String) {
+                auto value = Accessor::to_string(ctx, primary_value);
+#if REALM_ENABLE_SYNC
+                row_index = sync::create_object_with_primary_key(realm->read_group(), *table, value);
+#else
+                row_index = table->add_empty_row();
+                table->set_string_unique(primary_prop->table_column, row_index, value);
+#endif // REALM_ENABLE_SYNC
+            }
+            else {
+                REALM_TERMINATE("Unsupported primary key type.");
+            }
+>>>>>>> su/stable-id-support
+#endif
         }
         else if (!try_update) {
             throw std::logic_error(util::format("Attempting to create an object of type '%1' with an existing primary key value '%2'.",
@@ -210,7 +238,11 @@ Object Object::create(ContextType& ctx, std::shared_ptr<Realm> const& realm,
         }
     }
     else {
+#if REALM_ENABLE_SYNC
+        row_index = sync::create_object(realm->read_group(), *table);
+#else
         row_index = table->add_empty_row();
+#endif // REALM_ENABLE_SYNC
         created = true;
     }
 
