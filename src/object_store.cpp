@@ -142,7 +142,8 @@ TableRef create_table(Group& group, ObjectSchema const& object_schema)
 #if REALM_ENABLE_SYNC
     if (object_schema.primary_key.size()) {
         const Property* pk_property = object_schema.primary_key_property();
-        table = sync::create_table_with_primary_key(group, name, DataType(pk_property->type), pk_property->name);
+        table = sync::create_table_with_primary_key(group, name, DataType(pk_property->type),
+                                                    pk_property->name, pk_property->is_nullable);
     }
     else {
         table = sync::create_table(group, name);
@@ -164,7 +165,7 @@ void add_initial_columns(Group& group, ObjectSchema const& object_schema)
     for (auto const& prop : object_schema.persisted_properties) {
 #if REALM_ENABLE_SYNC
         // The sync::create_table* functions create the PK column for us.
-        if (object_schema.primary_key.size() && prop.name == object_schema.primary_key) {
+        if (object_schema.primary_key.size() && prop.is_primary) {
             continue;
         }
 #endif // REALM_ENABLE_SYNC
@@ -277,8 +278,8 @@ void ObjectStore::set_primary_key_for_object(Group& group, StringData object_typ
 #if REALM_ENABLE_SYNC
     // sync::create_table* functions should have already updated the pk table.
     if (primary_key.size() && sync::has_object_ids(group)) {
-      REALM_ASSERT(row != not_found);
-      REALM_ASSERT(table->get_string(c_primaryKeyPropertyNameColumnIndex, row) == primary_key);
+        REALM_ASSERT(row != not_found);
+        REALM_ASSERT(table->get_string(c_primaryKeyPropertyNameColumnIndex, row) == primary_key);
     }
 #endif // REALM_ENABLE_SYNC
 
