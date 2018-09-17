@@ -84,7 +84,7 @@ endif()
 
 set(INCLUDE_DIRS
     ${PEGTL_INCLUDE_DIR}
-    ${UV_INCLUDE_DIR}
+    ${PLATFORM_INCLUDES}
     ${CMAKE_CURRENT_SOURCE_DIR})
 
 if(REALM_ENABLE_SYNC)
@@ -121,7 +121,7 @@ endif()
 
 add_library(realm-object-store STATIC ${SOURCES} ${HEADERS})
 set_target_properties(realm-object-store PROPERTIES POSITION_INDEPENDENT_CODE 1)
-target_compile_definitions(realm-object-store PRIVATE ${PLATFORM_DEFINES})
+target_compile_definitions(realm-object-store PUBLIC ${PLATFORM_DEFINES})
 target_include_directories(realm-object-store PUBLIC ${INCLUDE_DIRS})
 target_link_libraries(realm-object-store PUBLIC realm ${PLATFORM_LIBRARIES})
 
