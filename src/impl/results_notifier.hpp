@@ -23,6 +23,7 @@
 #include "results.hpp"
 
 #include <realm/db.hpp>
+#include <realm/keys.hpp>
 
 namespace realm {
 namespace _impl {
