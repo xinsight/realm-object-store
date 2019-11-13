@@ -327,6 +327,14 @@ void RealmCoordinator::open_with_config(Realm::Config config)
     open_db();
 }
 
+void RealmCoordinator::create_session(const Realm::Config& config)
+{
+    REALM_ASSERT(config.sync_config);
+    std::unique_lock<std::mutex> lock(m_realm_mutex);
+    set_config(config);
+    bool exists = File::exists(m_config.path);
+    create_sync_session(!config.sync_config->is_partial && !exists, exists);
+}
 #endif
 
 namespace realm {
