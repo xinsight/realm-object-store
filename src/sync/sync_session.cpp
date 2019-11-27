@@ -29,6 +29,7 @@
 #include <realm/sync/protocol.hpp>
 
 #include "impl/realm_coordinator.hpp"
+#include <android/log.h>
 
 using namespace realm;
 using namespace realm::_impl;
@@ -883,6 +884,7 @@ void SyncSession::unregister_connection_change_callback(uint64_t token)
 
 void SyncSession::refresh_access_token(std::string access_token, util::Optional<std::string> server_url)
 {
+    __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] refresh_access_token server_url = %s ", server_url->c_str());
     std::unique_lock<std::mutex> lock(m_state_mutex);
     if (!m_server_url && !server_url) {
         // The first time this method is called, the server URL must be provided.

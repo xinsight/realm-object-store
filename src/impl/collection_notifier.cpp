@@ -22,6 +22,7 @@
 #include "shared_realm.hpp"
 
 #include <realm/db.hpp>
+#include <android/log.h>
 
 using namespace realm;
 using namespace realm::_impl;
@@ -339,8 +340,12 @@ void CollectionNotifier::before_advance()
 
 void CollectionNotifier::after_advance()
 {
+    __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] CollectionNotifier::after_advance");
     for_each_callback([&](auto& lock, auto& callback) {
+        __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] CollectionNotifier::after_advance changes_to_deliver.empty() = %d callback.initial_delivered = %d", callback.changes_to_deliver.empty
+                (), callback.initial_delivered);
         if (callback.initial_delivered && callback.changes_to_deliver.empty()) {
+            __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] CollectionNotifier::after_advance returning :(");
             return;
         }
         callback.initial_delivered = true;

@@ -32,6 +32,7 @@
 #if NETWORK_REACHABILITY_AVAILABLE
 #include "sync/impl/apple/network_reachability_observer.hpp"
 #endif
+#include <android/log.h>
 
 namespace realm {
 namespace _impl {
@@ -86,6 +87,7 @@ struct SyncClient {
 
     std::unique_ptr<sync::Session> make_session(std::string path, sync::Session::Config config)
     {
+        __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] make_session with path = %s, config.path = %s", path.c_str(), config.server_path.c_str());
         return std::make_unique<sync::Session>(m_client, std::move(path), std::move(config));
     }
 

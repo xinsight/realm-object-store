@@ -46,7 +46,7 @@
 
 #include <algorithm>
 #include <unordered_map>
-
+#include <android/log.h>
 using namespace realm;
 using namespace realm::_impl;
 
@@ -55,6 +55,7 @@ static auto& s_coordinators_per_path = *new std::unordered_map<std::string, std:
 
 std::shared_ptr<RealmCoordinator> RealmCoordinator::get_coordinator(StringData path)
 {
+    __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] get_coordinator for path = %s", path.data());
     std::lock_guard<std::mutex> lock(s_coordinator_mutex);
 
     auto& weak_coordinator = s_coordinators_per_path[path];
@@ -108,13 +109,19 @@ void RealmCoordinator::create_sync_session(bool force_client_resync, bool valida
     m_sync_session = SyncManager::shared().get_session(m_config.path, sync_config, force_client_resync);
 
     std::weak_ptr<RealmCoordinator> weak_self = shared_from_this();
+    __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] set_sync_transact_callback on path = %s ", m_config.path.c_str());
     SyncSession::Internal::set_sync_transact_callback(*m_sync_session,
                                                       [weak_self](VersionID old_version, VersionID new_version) {
+        __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS_sync_transact_callback] old_version = %d new_version = %d", (int)(old_version.version), (int)(new_version.version));
         if (auto self = weak_self.lock()) {
-            if (self->m_transaction_callback)
+            if (self->m_transaction_callback) {
+                __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS_sync_transact_callback] m_transaction_callback");
                 self->m_transaction_callback(old_version, new_version);
-            if (self->m_notifier)
+            }
+            if (self->m_notifier) {
+                __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS_sync_transact_callback] notify_others path = %s", self->get_path().c_str());
                 self->m_notifier->notify_others();
+            }
         }
     });
 #else
@@ -719,6 +726,7 @@ void RealmCoordinator::pin_version(VersionID versionid)
 
 void RealmCoordinator::register_notifier(std::shared_ptr<CollectionNotifier> notifier)
 {
+    __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] register_notifier");
     auto version = notifier->version();
     auto& self = Realm::Internal::get_coordinator(*notifier->get_realm());
     {
@@ -730,11 +738,22 @@ void RealmCoordinator::register_notifier(std::shared_ptr<CollectionNotifier> not
 
 void RealmCoordinator::clean_up_dead_notifiers()
 {
+    __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] clean_up_dead_notifiers for path %s", get_path().data());
     auto swap_remove = [&](auto& container) {
         bool did_remove = false;
         for (size_t i = 0; i < container.size(); ++i) {
-            if (container[i]->is_alive())
+//            if (container[i]) {
+//                __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] container path = %s", container[i]->get_realm()->config().path.c_str());
+//
+//            } else {
+//                __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] container container[i] is null");
+//            }
+
+            if (container[i]->is_alive()) {
+                __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] is alive]");
+                __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] path %s is alive", container[i]->get_realm()->config().path.c_str());
                 continue;
+            }
 
             // Ensure the notifier is destroyed here even if there's lingering refs
             // to the async notifier elsewhere
@@ -749,13 +768,18 @@ void RealmCoordinator::clean_up_dead_notifiers()
         return did_remove;
     };
 
+    __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] m_notifiers before size = %d", (int)(m_notifiers.size()));
     if (swap_remove(m_notifiers) && m_notifiers.empty()) {
         m_notifier_sg = nullptr;
         m_notifier_skip_version = {0, 0};
     }
+    __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] m_notifiers after size = %d", (int)(m_notifiers.size()));
+    __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] m_new_notifiers before size = %d", (int)(m_new_notifiers.size()));
+
     if (swap_remove(m_new_notifiers) && m_new_notifiers.empty()) {
         m_advancer_sg = nullptr;
     }
+    __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] m_new_notifiers after size = %d", (int)(m_new_notifiers.size()));
 }
 
 void RealmCoordinator::on_change()
@@ -864,20 +888,24 @@ private:
 
 void RealmCoordinator::run_async_notifiers()
 {
+    __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] run_async_notifiers [BEGIN] for path %s", get_path().data());
     std::unique_lock<std::mutex> lock(m_notifier_mutex);
 
     clean_up_dead_notifiers();
 
     if (m_notifiers.empty() && m_new_notifiers.empty()) {
+        __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS]\t run_async_notifiers empty nothing to notify for path %s", get_path().data());
         m_notifier_cv.notify_all();
         return;
     }
 
     if (!m_notifier_sg) {
+        __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS]\t run_async_notifiers m_db->start_read for path %s", get_path().data());
         m_notifier_sg = m_db->start_read();
     }
 
     if (m_async_error) {
+        __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS]\t run_async_notifiers m_async_error set returning for path %s", get_path().data());
         std::move(m_new_notifiers.begin(), m_new_notifiers.end(), std::back_inserter(m_notifiers));
         m_new_notifiers.clear();
         m_notifier_cv.notify_all();
@@ -892,6 +920,7 @@ void RealmCoordinator::run_async_notifiers()
     auto advancer_sg = std::move(m_advancer_sg);
 
     if (!new_notifiers.empty()) {
+        __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS]\t run_async_notifiers new_notifiers not empty for path %s", get_path().data());
         REALM_ASSERT(advancer_sg);
         REALM_ASSERT_3(advancer_sg->get_version_of_current_transaction().version,
                        <=, new_notifiers.front()->version().version);
@@ -922,6 +951,7 @@ void RealmCoordinator::run_async_notifiers()
         version = advancer_sg->get_version_of_current_transaction();
     }
     else {
+        __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS]\t run_async_notifiers new_notifiers empty  start read, for path %s", get_path().data());
         // If we have no new notifiers we want to just advance to the latest
         // version, but we have to pick a "latest" version while holding the
         // notifier lock to avoid advancing over a transaction which should be
@@ -940,6 +970,7 @@ void RealmCoordinator::run_async_notifiers()
     lock.unlock();
 
     if (skip_version.version) {
+        __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS]\t run_async_notifiers skip_version.version %d, for path %s", (int)(skip_version.version), get_path().data());
         REALM_ASSERT(!notifiers.empty());
         REALM_ASSERT(version >= skip_version);
         IncrementalChangeInfo change_info(*m_notifier_sg, notifiers);
@@ -967,12 +998,14 @@ void RealmCoordinator::run_async_notifiers()
     // Attach the new notifiers to the main SG and move them to the main list
     for (auto& notifier : new_notifiers) {
         notifier->attach_to(m_notifier_sg);
+        __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS]\t run_async_notifiers (new_notifiers) notifier->run(), for path %s", get_path().data());
         notifier->run();
     }
 
     // Change info is now all ready, so the notifiers can now perform their
     // background work
     for (auto& notifier : notifiers) {
+        __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS]\t run_async_notifiers (notifiers) notifier->run(), for path %s", get_path().data());
         notifier->run();
     }
 
@@ -987,6 +1020,7 @@ void RealmCoordinator::run_async_notifiers()
     }
     clean_up_dead_notifiers();
     m_notifier_cv.notify_all();
+    __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] run_async_notifiers [DONE], for path %s", get_path().data());
 }
 
 bool RealmCoordinator::can_advance(Realm& realm)
