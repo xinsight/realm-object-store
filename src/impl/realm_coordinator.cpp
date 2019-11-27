@@ -726,7 +726,7 @@ void RealmCoordinator::pin_version(VersionID versionid)
 
 void RealmCoordinator::register_notifier(std::shared_ptr<CollectionNotifier> notifier)
 {
-    __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] register_notifier");
+    __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] register_notifier for path %s", notifier->get_realm()->config().path.c_str());
     auto version = notifier->version();
     auto& self = Realm::Internal::get_coordinator(*notifier->get_realm());
     {

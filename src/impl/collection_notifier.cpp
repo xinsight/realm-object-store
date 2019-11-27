@@ -275,6 +275,9 @@ std::vector<CollectionNotifier::Callback>::iterator CollectionNotifier::find_cal
 void CollectionNotifier::unregister() noexcept
 {
     std::lock_guard<std::mutex> lock(m_realm_mutex);
+    if (m_realm) {
+        __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] unregister for path %s", m_realm->config().path.c_str());
+    }
     m_realm = nullptr;
 }
 
