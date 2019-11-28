@@ -26,11 +26,15 @@
 #include "schema.hpp"
 
 #include <stdexcept>
+#include <android/log.h>
 
 namespace realm {
 
 Results::Results() = default;
-Results::~Results() = default;
+Results::~Results()
+{
+    __android_log_print(ANDROID_LOG_VERBOSE, "NEO", "[OS] ~Results path %s", m_realm->config().path.c_str());
+}
 
 Results::Results(SharedRealm r, Query q, DescriptorOrdering o)
 : m_realm(std::move(r))
