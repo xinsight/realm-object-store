@@ -20,7 +20,9 @@ set(SOURCES
     impl/results_notifier.cpp
     impl/transact_log_handler.cpp
     impl/weak_realm_notifier.cpp
-    util/uuid.cpp)
+    util/uuid.cpp
+    util/extended_json.cpp
+    util/bson.cpp)
 
 set(HEADERS
     binding_callback_thread_observer.hpp
@@ -70,7 +72,9 @@ set(HEADERS
     util/event_loop_dispatcher.hpp
     util/event_loop_signal.hpp
     util/tagged_bool.hpp
-    util/uuid.hpp)
+    util/uuid.hpp
+    util/extended_json.hpp
+    util/bson.hpp)
 
 if(APPLE)
     list(APPEND SOURCES impl/apple/external_commit_helper.cpp impl/apple/keychain_helper.cpp)
@@ -103,7 +107,8 @@ if(REALM_ENABLE_SYNC)
         sync/sync_user.hpp
         sync/impl/sync_client.hpp
         sync/impl/sync_file.hpp
-        sync/impl/sync_metadata.hpp)
+        sync/impl/sync_metadata.hpp
+        util/extended_json.hpp)
     list(APPEND SOURCES
         sync/app.cpp
         sync/app_credentials.cpp
@@ -124,9 +129,9 @@ if(REALM_ENABLE_SYNC)
     list(APPEND INCLUDE_DIRS ${ZLIB_INCLUDE_DIRS})
 endif()
 
-if(REALM_ENABLE_SYNC OR REALM_ENABLE_SERVER)
+
     list(APPEND INCLUDE_DIRS ../external/json)
-endif()
+
 
 add_library(realm-object-store STATIC ${SOURCES} ${HEADERS})
 set_target_properties(realm-object-store PROPERTIES POSITION_INDEPENDENT_CODE 1)

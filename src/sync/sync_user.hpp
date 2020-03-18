@@ -32,6 +32,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <json.hpp>
 
 namespace realm {
 
@@ -67,7 +68,7 @@ struct RealmJWT {
     // When the token was issued.
     long issued_at;
     // Custom user data embedded in the encoded token.
-    util::Optional<std::map<std::string, util::Any>> user_data;
+    util::Optional<nlohmann::json> user_data;
 
     RealmJWT(const std::string& token);
 
@@ -186,7 +187,7 @@ public:
     std::vector<SyncUserIdentity> identities() const;
 
     // Custom user data embedded in the access token.
-    util::Optional<std::map<std::string, util::Any>> custom_data() const;
+    util::Optional<nlohmann::json> custom_data() const;
 
     State state() const;
 

@@ -66,7 +66,7 @@ RealmJWT::RealmJWT(const std::string& token)
     this->issued_at = app::value_from_json<long>(json, "iat");
 
     if (json.find("user_data") != json.end()) {
-        this->user_data = json["user_data"].get<std::map<std::string, util::Any>>();
+        this->user_data = json["user_data"].get<nlohmann::json>();
     }
 }
 
@@ -337,7 +337,7 @@ SyncUserProfile SyncUser::user_profile() const
     return m_user_profile;
 }
 
-util::Optional<std::map<std::string, util::Any>> SyncUser::custom_data() const
+util::Optional<nlohmann::json> SyncUser::custom_data() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_access_token.user_data;
