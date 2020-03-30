@@ -18,10 +18,14 @@
 #include <realm/util/any.hpp>
 #include <realm/mixed.hpp>
 #include <stack>
+#include <queue>
 #include "bson.hpp"
 
 using namespace nlohmann;
-using namespace realm;
+
+namespace realm {
+namespace bson {
+
 
 class ExtendedJsonParser : public nlohmann::json_sax<json> {
 public:
@@ -30,7 +34,7 @@ public:
     using number_float_t = typename json::number_float_t;
     using string_t = typename json::string_t;
 
-    ExtendedJsonParser(Document* d, const bool allow_exceptions_ = true);
+    ExtendedJsonParser(BsonDocument* d, const bool allow_exceptions_ = true);
 
     /*!
     @brief a null value was read
@@ -121,8 +125,11 @@ public:
     bool parse_error(std::size_t position,
                      const std::string& last_token,
                      const nlohmann::detail::exception& ex)  override;
+    std::stack<BsonContainer> m_marks;
 private:
-
+    struct State {
+        
+    };
 
     struct Mark {
         Bson container;
@@ -130,17 +137,22 @@ private:
 
     struct Instruction {
         int type;
-        Bson value;
-        bson_key_t key;
+        std::string key;
     };
 
     /// the parsed JSON value
-    Document* head;
+    BsonDocument* head;
     
-    std::stack<Document*> m_marks;
+
     std::stack<Instruction> m_instructions;
     bool allow_exceptions;
     int32_t m_type = -1;
+
+    friend struct RegularExpression;
 };
+
+BsonDocument parse(const std::string& json);
+} // namespace bson
+} // namesapce realm
 
 #endif /* extended_json_hpp */

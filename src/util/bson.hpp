@@ -41,8 +41,535 @@
 #include "bson_document.hpp"
 #include <sstream>
 #include <json.hpp>
+#include <variant>
+#include <optional>
+#include <set>
+#include <unordered_set>
+#include <any>
 
 namespace realm {
+namespace bson {
+
+static constexpr bool str_equal(char const * a, char const * b) {
+    return *a == *b && (*a == '\0' || str_equal(a + 1, b + 1));
+}
+
+/// Provides regular expression capabilities for pattern matching strings in queries.
+/// MongoDB uses Perl compatible regular expressions (i.e. "PCRE") version 8.42 with UTF-8 support.
+struct RegularExpression {
+    enum class Options {
+        None,
+        IgnoreCase,
+        Multiline,
+        Dotall,
+        Extended
+    };
+
+
+    RegularExpression(const std::string& pattern,
+                      const std::string& options) :
+    m_pattern(std::move(pattern)) {
+        std::transform(options.begin(),
+                       options.end(),
+                       std::back_inserter(m_options),
+                       [](const char c) { return options_string_to_options(c); });
+    }
+
+    RegularExpression(const std::string& pattern,
+                      const std::vector<Options> options) :
+    m_pattern(std::move(pattern)),
+    m_options(options) {}
+
+    RegularExpression& operator=(const RegularExpression& regex)
+    {
+        m_pattern = regex.m_pattern;
+        m_options = regex.m_options;
+        return *this;
+    }
+
+    std::string pattern() const
+    {
+        return m_pattern;
+    }
+
+    std::vector<Options> options() const
+    {
+        return m_options;
+    }
+private:
+    static constexpr Options options_string_to_options(const char option)
+    {
+        if (option == 'i') {
+            return Options::IgnoreCase;
+        } else if (option == 'm') {
+            return Options::Multiline;
+        } else if (option == 's') {
+            return Options::Dotall;
+        } else if (option == 'x') {
+            return Options::Extended;
+        } else {
+            throw std::runtime_error("invalid options type");
+        }
+    };
+
+    std::string m_pattern;
+    std::vector<Options> m_options;
+};
+
+/// MaxKey will always be the smallest value when comparing to other BSON types
+struct MinKey {
+    constexpr explicit MinKey(int)
+    {
+    }
+};
+static constexpr MinKey min_key{1};
+
+/// MaxKey will always be the greatest value when comparing to other BSON types
+struct MaxKey {
+    constexpr explicit MaxKey(int)
+    {
+    }
+};
+static constexpr MinKey max_key{1};
+
+
+struct index_hasher {
+    enum class hash_type {
+        key, idx
+    };
+
+//    index_hasher() {}
+    virtual ~index_hasher() = default;
+    virtual hash_type type() const = 0;
+};
+
+struct indexed_seq_key {
+    using WeakIndexedHasher = std::weak_ptr<index_hasher>;
+
+    struct hasher {
+        std::size_t operator()(const indexed_seq_key& v) const noexcept {
+            return v.hash();
+        }
+    };
+
+    indexed_seq_key() = delete;
+    indexed_seq_key(std::string key, long long idx, const index_hasher& hasher_gen) :
+    m_key(key),
+    m_idx(idx),
+    m_hasher(std::move(&hasher_gen)) {}
+
+    indexed_seq_key(long long idx, const index_hasher& hasher_gen) :
+    m_idx(idx),
+    m_hasher(std::move(&hasher_gen)) {}
+    indexed_seq_key(std::string key, const index_hasher& hasher_gen) : m_key(key), m_hasher(std::move(&hasher_gen)) {}
+
+    indexed_seq_key(const indexed_seq_key& other)
+    : m_key(other.m_key), m_idx(other.m_idx), m_hasher(other.m_hasher)
+    {
+    }
+    indexed_seq_key(indexed_seq_key&&) = default;
+    ~indexed_seq_key() {}
+
+    indexed_seq_key& operator =(const indexed_seq_key& map ) {
+        m_key = map.m_key;
+        m_idx = map.m_idx;
+        m_hasher = map.m_hasher;
+        return *this;
+    }
+
+    bool operator==(const indexed_seq_key& rhs) const {
+        if (!m_key.empty() && !rhs.m_key.empty()) {
+            return rhs.m_key == m_key;
+        }
+
+        return m_idx == rhs.m_idx;
+    }
+
+    bool operator<(const indexed_seq_key& rhs) const {
+        if (rhs.m_idx != -1) {
+            if (m_idx < rhs.m_idx) return true;
+            if (rhs.m_idx < m_idx) return false;
+        }
+//        if (key < rhs.key) return true;
+//        if (rhs.key < key) return false;
+        return memcmp(m_key.data(), rhs.m_key.data(), rhs.m_key.size()) != 0;
+    }
+
+    std::string key() const { return m_key; }
+private:
+    std::string      m_key;
+    long long        m_idx;
+    const index_hasher* m_hasher = NULL;
+
+    size_t hash() const {
+        switch (m_hasher->type()) {
+            case index_hasher::hash_type::key:
+                return std::hash<std::string>{}(m_key);
+            case index_hasher::hash_type::idx:
+                return m_idx;
+        }
+    }
+};
+
+template <typename T>
+class indexed_seq : std::unordered_map<indexed_seq_key, T, indexed_seq_key::hasher>,
+                    public index_hasher
+{
+public:
+    using base = std::unordered_map<indexed_seq_key, T, indexed_seq_key::hasher>;
+    using base::base;
+    using base::operator=;
+    using base::end;
+    using base::size;
+//    using base::~indexed_seq;
+
+    virtual ~indexed_seq() {
+//        base::~base();
+    };
+
+    class iterator: public std::iterator<
+                        std::forward_iterator_tag, // iterator_category
+                        T,                      // value_type
+                        T,                      // difference_type
+                        T*,               // pointer
+                        T&                // reference
+    > {
+        size_t m_idx = 0;
+        indexed_seq* m_map;
+    public:
+        iterator(indexed_seq* map, size_t idx) : m_idx(idx), m_map(map) {}
+        iterator& operator++() {
+            m_idx++;
+            return *this;
+        }
+        iterator& operator--() {
+            m_idx--;
+            return *this;
+        }
+        iterator operator++(int) {
+            return ++(*this);
+        }
+        iterator operator--(int) {
+            return --(*this);
+        }
+        bool operator==(iterator other) const {return m_idx == other.m_idx;}
+        bool operator!=(iterator other) const {return !(*this == other);}
+
+        std::pair<std::string, T> operator*()
+        {
+            return m_map->operator[](m_idx);
+        }
+    };
+
+    using entry = std::pair<std::string, T>;
+
+    entry operator[](size_t idx)
+    {
+        m_type = index_hasher::hash_type::idx;
+        auto key = indexed_seq_key(static_cast<long long>(idx), *this);
+
+        auto entry = *(base::find(key));
+        return { entry.first.key(), entry.second };
+    }
+
+    iterator begin()
+    {
+        return iterator(this, 0);
+    }
+
+    iterator end()
+    {
+        return iterator(this, this->size());
+    }
+
+//    std::pair<std::string, T> (const std::string& k)
+//    {
+//        m_type = index_hasher::hash_type::key;
+//        auto entry = base::find({k, this});
+//        if (entry != base::end()) {
+//            T& value = (*entry).second;
+//            return value;
+//        }
+//
+//        T& test = base::operator[]({k, static_cast<long>(base::size()), this});
+//        return test;
+//    }
+
+    T& operator[](const std::string& k)
+    {
+        m_type = index_hasher::hash_type::key;
+
+        auto entry = base::find({k, *this});
+        if (entry != base::end()) {
+            T& value = (*entry).second;
+            return value;
+        }
+
+        T& test = base::operator[]({k, static_cast<long>(base::size()), *this});
+        return test;
+    }
+
+
+
+//    typename base::iterator insert(std::pair<std::string, T> pair)
+//    {
+//        return this->insert(pair);
+//    }
+//
+//    typename base::iterator insert(const std::pair<std::string, T> &pair)
+//    {
+//        return this->insert(pair);
+//    }
+//
+    iterator back()
+    {
+        return this->end()--;
+    }
+
+    void pop_back()
+    {
+        auto last_idx = this->size() - 1;
+
+        m_type = index_hasher::hash_type::idx;
+
+        base::erase(this->find({static_cast<long long>(last_idx), *this}));
+    }
+
+    virtual hash_type type() const override
+    {
+        return m_type;
+    }
+//    const typename std::map<indexed_seq_key, T>::iterator end()
+//    {
+//        return m_map.end();
+//    }
+private:
+    friend struct indexed_seq_key;
+    index_hasher::hash_type m_type;
+//    std::unordered_set<indexed_seq> m_set;
+//    hash_type type() const override
+//    {
+//        return m_type;
+//    }
+};
+
+
+class Bson;
+//template <class T>
+class Bson : public std::variant<
+    int32_t,
+    int64_t,
+    bool,
+    float,
+    double,
+    StringData,
+    BinaryData,
+    Timestamp,
+    Decimal128,
+    ObjectId,
+    RegularExpression,
+    MinKey,
+    MaxKey,
+    indexed_seq<Bson>,
+    std::vector<Bson>
+> {
+public:
+    using base = std::variant<
+        int32_t,
+        int64_t,
+        bool,
+        float,
+        double,
+        StringData,
+        BinaryData,
+        Timestamp,
+        Decimal128,
+        ObjectId,
+        RegularExpression,
+        MinKey,
+        MaxKey,
+        indexed_seq<Bson>,
+        std::vector<Bson>
+    >;
+    using base::base;
+    using base::operator=;
+};
+
+//template <template<class> class K>
+//struct __bson_knot : public K<__bson_knot<K>> {
+//    using K<__bson_knot<K>>::K;
+//    using K<__bson_knot<K>>::operator=;
+//
+//    __bson_knot& operator=(const __bson_knot& bson) {
+//
+//    }
+//};
+//
+//using Bson = __bson_knot<__bson>;
+//class Bson : public std::variant<
+//    int32_t,
+//    int64_t,
+//    bool,
+//    float,
+//    double,
+//    StringData,
+//    BinaryData,
+//    Timestamp,
+//    Decimal128,
+//    ObjectId,
+//    RegularExpression,
+//    MinKey,
+//    MaxKey,
+//    Code,
+//    CodeWithScope,
+//    ordered_map<Bson>,
+//    std::vector<Bson>
+//> {
+//public:
+//    using base = std::variant<
+//        int32_t,
+//        int64_t,
+//        bool,
+//        float,
+//        double,
+//        StringData,
+//        BinaryData,
+//        Timestamp,
+//        Decimal128,
+//        ObjectId,
+//        RegularExpression,
+//        MinKey,
+//        MaxKey,
+//        Code,
+//        CodeWithScope,
+//        ordered_map<Bson>,
+//        std::vector<Bson>
+//    >;
+//    using base::base;
+//    using base::operator=;
+//};
+
+template <class T>
+inline bool operator == (std::pair<std::string, T> const& lhs, std::pair<std::string, T> const& rhs)
+{
+    return lhs.first == rhs.first;
+}
+
+//template<>
+//class __bson_document<Bson>
+//{
+//    __bson_document<Bson>& __bson_document<Bson>::operator=(const __bson_document<Bson>& d);
+//};
+
+//__bson_document& __bson_document::operator=(const __bson_document& d)
+//{
+//    return d;
+//}
+
+using BsonDocument = indexed_seq<Bson>;
+//class BsonDocument : std::unordered_map<std::string, __proxy_base>
+//{
+//
+//
+//    using base = std::unordered_map<std::string, __proxy_base>;
+//    using base::base;
+//
+//public:
+//    __proxy_base& operator[](const std::string& k)
+//    {
+//        return base::operator[](k).forward(m_insert_order, k);
+//    }
+//
+//    void pop_back()
+//    {
+//        base::erase(*m_insert_order.end());
+//        m_insert_order.erase(*m_insert_order.end());
+//    }
+//private:
+////    std::unordered_map<std::string, Bson> m_map;
+//    std::unordered_set<std::string> m_insert_order;
+//};
+//
+//class Bson : public std::variant<
+//    int32_t,
+//    int64_t,
+//    bool,
+//    float,
+//    double,
+//    StringData,
+//    BinaryData,
+//    Timestamp,
+//    Decimal128,
+//    ObjectId,
+//    RegularExpression,
+//    MinKey,
+//    MaxKey,
+//    Code,
+//    CodeWithScope,
+//    BsonDocument,
+//    std::vector<Bson>
+//> {
+//public:
+//    using base = std::variant<
+//        int32_t,
+//        int64_t,
+//        bool,
+//        float,
+//        double,
+//        StringData,
+//        BinaryData,
+//        Timestamp,
+//        Decimal128,
+//        ObjectId,
+//        RegularExpression,
+//        MinKey,
+//        MaxKey,
+//        Code,
+//        CodeWithScope,
+//        BsonDocument,
+//        std::vector<Bson>
+//    >;
+//    using base::base;
+//    using base::operator=;
+//};
+
+using BsonArray = std::vector<Bson>;
+class BsonContainer : public std::variant<BsonDocument, BsonArray> {
+public:
+    using base = std::variant<BsonDocument, BsonArray>;
+    using base::base;
+    using base::operator=;
+    
+    void push_back(std::pair<std::string, Bson> value) {
+        if (std::holds_alternative<BsonDocument>(*this)) {
+            std::get<BsonDocument>(*this)[value.first] = value.second;
+        } else {
+            std::get<BsonArray>(*this).push_back(value.second);
+        }
+    }
+
+    std::pair<std::string, Bson> back()
+    {
+        if (std::holds_alternative<BsonDocument>(*this)) {
+            auto pair = *std::get<BsonDocument>(*this).back();
+
+            return pair;
+        } else {
+            return {"", std::get<BsonArray>(*this).back()};
+        }
+    }
+
+    void pop_back()
+    {
+        if (std::holds_alternative<BsonDocument>(*this)) {
+            std::get<BsonDocument>(*this).pop_back();
+        } else {
+            std::get<BsonArray>(*this).pop_back();
+        }
+    }
+private:
+//    std::variant<BsonDocument, BsonArray> m_container;
+};
 
 struct bson_key_t {
     typedef enum {
@@ -128,623 +655,93 @@ enum class BsonType {
     MaxKey              = 127
 };
 
-class Bson;
-
-template <typename ValueType>
-class BsonContainer : public std::vector<ValueType> {
-public:
-    friend class ExtendedJsonParser;
-};
-
-class BsonArray : public BsonContainer<Bson> {
-};
-
-class Document : public std::map<std::string, Bson> {
-public:
-    static Document parse(const std::string& json);
-    inline std::string to_json() const;
-
-
-    friend class ExtendedJsonParser;
-};
-
 inline std::ostream& operator<<(std::ostream& out, const BsonArray& m)
 {
 
 }
 
-class Bson {
-public:
-    Bson() noexcept
-        : m_type(BsonType::Null)
-    {
-    }
-
-    Bson(util::None) noexcept
-        : Bson()
-    {
-    }
-
-    Bson(int32_t i) noexcept;
-    Bson(int64_t) noexcept;
-    Bson(bool) noexcept;
-    Bson(float) noexcept;
-    Bson(double) noexcept;
-    Bson(StringData) noexcept;
-    Bson(BinaryData) noexcept;
-    Bson(Timestamp) noexcept;
-    Bson(Decimal128);
-    Bson(ObjectId) noexcept;
-    Bson(Document*) noexcept;
-    Bson(BsonArray*) noexcept;
-
-    // These are shortcuts for Bson(StringData(c_str)), and are
-    // needed to avoid unwanted implicit conversion of char* to bool.
-    Bson(char* c_str) noexcept
-        : Bson(StringData(c_str))
-    {
-    }
-    Bson(const char* c_str) noexcept
-        : Bson(StringData(c_str))
-    {
-    }
-    Bson(const std::string& s) noexcept
-        : Bson(StringData(s))
-    {
-    }
-    
-    BsonType get_type() const noexcept
-    {
-        return BsonType(m_type);
-    }
-
-    template <class T>
-    T get() const noexcept;
-
-    // These functions are kept to be backwards compatible
-    int32_t get_int32() const;
-    int64_t get_int64() const;
-    bool get_bool() const;
-    float get_float() const;
-    double get_double() const;
-    StringData get_string() const;
-    BinaryData get_binary() const;
-    Timestamp get_timestamp() const;
-    Decimal128 get_decimal() const;
-    ObjectId get_object_id() const;
-    Document& get_document() const;
-    BsonArray& get_array() const;
-
-    bool is_null() const;
-    int compare(const Bson& b) const;
-    bool operator==(const Bson& other) const
-    {
-        return compare(other) == 0;
-    }
-    bool operator!=(const Bson& other) const
-    {
-        return compare(other) != 0;
-    }
-
-private:
-    friend std::ostream& operator<<(std::ostream& out, const Bson& m);
-
-    BsonType m_type;
-    union {
-        int32_t int32_val;
-        int64_t int64_val;
-        bool bool_val;
-        double double_val;
-        StringData string_val;
-        BinaryData binary_val;
-        Timestamp date_val;
-        ObjectId id_val;
-        Decimal128 decimal_val;
-        Document* document_val;
-        BsonArray* array_val;
-    };
-};
-
-// MARK: - BSON Implementation
-
-template <>
-inline BsonArray& Bson::get<BsonArray&>() const noexcept
-{
-    REALM_ASSERT(m_type == BsonType::Array);
-    return *array_val;
-}
-
-inline BsonArray& Bson::get_array() const
-{
-    return get<BsonArray&>();
-}
-
-template <>
-inline int32_t Bson::get<int32_t>() const noexcept
-{
-    REALM_ASSERT(get_type() == BsonType::Int32);
-    return int32_val;
-}
-
-inline int32_t Bson::get_int32() const
-{
-    return get<int32_t>();
-}
-
-template <>
-inline int64_t Bson::get<int64_t>() const noexcept
-{
-    REALM_ASSERT(get_type() == BsonType::Int64);
-    return int64_val;
-}
-
-inline int64_t Bson::get_int64() const
-{
-    return get<int64_t>();
-}
-
-template <>
-inline bool Bson::get<bool>() const noexcept
-{
-    REALM_ASSERT(get_type() == BsonType::Boolean);
-    return bool_val;
-}
-
-inline bool Bson::get_bool() const
-{
-    return get<bool>();
-}
-
-inline float Bson::get_float() const
-{
-    return get<float>();
-}
-
-template <>
-inline double Bson::get<double>() const noexcept
-{
-    REALM_ASSERT(get_type() == BsonType::Double);
-    return double_val;
-}
-
-inline double Bson::get_double() const
-{
-    return get<double>();
-}
-
-template <>
-inline StringData Bson::get<StringData>() const noexcept
-{
-    REALM_ASSERT(get_type() == BsonType::String);
-    return string_val;
-}
-
-inline StringData Bson::get_string() const
-{
-    return get<StringData>();
-}
-
-template <>
-inline BinaryData Bson::get<BinaryData>() const noexcept
-{
-    REALM_ASSERT(get_type() == BsonType::BinaryData);
-    return binary_val;
-}
-
-inline BinaryData Bson::get_binary() const
-{
-    return get<BinaryData>();
-}
-
-template <>
-inline Timestamp Bson::get<Timestamp>() const noexcept
-{
-    REALM_ASSERT(get_type() == BsonType::Timestamp);
-    return date_val;
-}
-
-inline Timestamp Bson::get_timestamp() const
-{
-    return get<Timestamp>();
-}
-
-template <>
-inline Decimal128 Bson::get<Decimal128>() const noexcept
-{
-    REALM_ASSERT(get_type() == BsonType::Decimal128);
-    return decimal_val;
-}
-
-template <>
-inline ObjectId Bson::get<ObjectId>() const noexcept
-{
-    REALM_ASSERT(get_type() == BsonType::ObjectId);
-    return id_val;
-}
-
-template <>
-inline Document& Bson::get<Document&>() const noexcept
-{
-    REALM_ASSERT(m_type == BsonType::Object);
-    return *document_val;
-}
-
-inline Document& Bson::get_document() const
-{
-    return get<Document&>();
-}
-
-inline Decimal128 Bson::get_decimal() const
-{
-    return get<Decimal128>();
-}
-
-inline ObjectId Bson::get_object_id() const
-{
-    return get<ObjectId>();
-}
-
-inline bool Bson::is_null() const
-{
-    return (m_type == BsonType::Null);
-}
-
-inline std::ostream& operator<<(std::ostream& out, const Bson& m)
-{
-    out << "Bson(";
-    if (m.is_null()) {
-        out << "null";
-    }
-    else {
-        switch (m.m_type) {
-            case BsonType::Int32:
-                out << m.int32_val;
-                break;
-            case BsonType::Int64:
-                out << m.int64_val;
-                break;
-            case BsonType::Boolean:
-                out << (m.bool_val ? "true" : "false");
-                break;
-            case BsonType::Double:
-                out << m.double_val;
-                break;
-            case BsonType::String:
-                out << m.string_val;
-                break;
-            case BsonType::BinaryData:
-                out << m.binary_val;
-                break;
-            case BsonType::Timestamp:
-                out << m.date_val;
-                break;
-            case BsonType::Decimal128:
-                out << m.decimal_val;
-                break;
-            case BsonType::ObjectId: {
-                out << m.get<ObjectId>();
-                break;
-            }
-            case BsonType::Object: {
-//                for (const auto& b : m.get_document()) {
-//                    out<<b.first<<':'<<b.second;
-//                }
-                break;
-            }
-            case BsonType::Array: {
-                out << m.get_array();
-                break;
-//                for (const auto& b : m.get_array()) {
-//                    out << b;
-//                }
-//                break;
-            }
-
-            default:
-                REALM_ASSERT(false);
-        }
-    }
-    out << ")";
-    return out;
-}
-//    namespace _impl {
-//    inline int compare_string(StringData a, StringData b)
-//    {
-//        if (a == b)
-//            return 0;
-//        return utf8_compare(a, b) ? -1 : 1;
-//    }
-//
-//    template <int>
-//    struct IntTypeForSize;
-//    template <>
-//    struct IntTypeForSize<1> {
-//        using type = uint8_t;
-//    };
-//    template <>
-//    struct IntTypeForSize<2> {
-//        using type = uint16_t;
-//    };
-//    template <>
-//    struct IntTypeForSize<4> {
-//        using type = uint32_t;
-//    };
-//    template <>
-//    struct IntTypeForSize<8> {
-//        using type = uint64_t;
-//    };
-//
-//    template <typename Float>
-//    inline int compare_float(Float a_raw, Float b_raw)
-//    {
-//        bool a_nan = std::isnan(a_raw);
-//        bool b_nan = std::isnan(b_raw);
-//        if (!a_nan && !b_nan) {
-//            // Just compare as IEEE floats
-//            return a_raw == b_raw ? 0 : a_raw < b_raw ? -1 : 1;
-//        }
-//        if (a_nan && b_nan) {
-//            // Compare the nan values as unsigned
-//            using IntType = typename _impl::IntTypeForSize<sizeof(Float)>::type;
-//            IntType a = 0, b = 0;
-//            memcpy(&a, &a_raw, sizeof(Float));
-//            memcpy(&b, &b_raw, sizeof(Float));
-//            return a == b ? 0 : a < b ? -1 : 1;
-//        }
-//        // One is nan, the other is not
-//        // nans are treated as being less than all non-nan values
-//        return a_nan ? -1 : 1;
-//    }
-//    } // namespace _impl
-
-    inline int Bson::compare(const Bson& b) const
-    {
-        // Comparing types first makes it possible to make a sort of a list of Mixed
-        // This will also handle the case where null values are considered lower than all other values
-        if (m_type > b.m_type)
-            return 1;
-        else if (m_type < b.m_type)
-            return -1;
-
-        // Now we are sure the two types are the same
-        if (is_null()) {
-            // Both are null
-            return 0;
-        }
-
-        switch (get_type()) {
-            case BsonType::Int32:
-                if (get<int32_t>() > b.get<int32_t>())
-                    return 1;
-                else if (get<int32_t>() < b.get<int32_t>())
-                    return -1;
-                break;
-            case BsonType::Int64:
-                if (get<int64_t>() > b.get<int64_t>())
-                    return 1;
-                else if (get<int64_t>() < b.get<int64_t>())
-                    return -1;
-                break;
-            case BsonType::String:
-                return _impl::compare_string(get<StringData>(), b.get<StringData>());
-                break;
-            case BsonType::Double:
-                return _impl::compare_float(get<double>(), b.get<double>());
-            case BsonType::Boolean:
-                if (get<bool>() > b.get<bool>())
-                    return 1;
-                else if (get<bool>() < b.get<bool>())
-                    return -1;
-                break;
-            case BsonType::Timestamp:
-                if (get<Timestamp>() > b.get<Timestamp>())
-                    return 1;
-                else if (get<Timestamp>() < b.get<Timestamp>())
-                    return -1;
-                break;
-            case BsonType::ObjectId: {
-                auto l = get<ObjectId>();
-                auto r = b.get<ObjectId>();
-                if (l > r)
-                    return 1;
-                else if (l < r)
-                    return -1;
-                break;
-            }
-            case BsonType::Decimal128: {
-                auto l = get<Decimal128>();
-                auto r = b.get<Decimal128>();
-                if (l > r)
-                    return 1;
-                else if (l < r)
-                    return -1;
-                break;
-            }
-            default:
-                REALM_ASSERT_RELEASE(false && "Compare not supported for this column type");
-                break;
-        }
-
-        return 0;
-    }
-
-
-
-
-
-inline Bson::Bson(int32_t v) noexcept
-{
-    m_type = BsonType::Int32;
-    int32_val = v;
-}
-
-inline Bson::Bson(int64_t v) noexcept
-{
-    m_type = BsonType::Int64;
-    int64_val = v;
-}
-
-inline Bson::Bson(bool v) noexcept
-{
-    m_type = BsonType::Boolean;
-    bool_val = v;
-}
-
-inline Bson::Bson(double v) noexcept
-{
-    m_type = BsonType::Double;
-    double_val = v;
-}
-
-inline Bson::Bson(StringData v) noexcept
-{
-    if (!v.is_null()) {
-        m_type = BsonType::String;
-        string_val = v;
-    }
-    else {
-        m_type = BsonType::Null;
-    }
-}
-
-inline Bson::Bson(BinaryData v) noexcept
-{
-    if (!v.is_null()) {
-        m_type = BsonType::BinaryData;
-        binary_val = v;
-    }
-    else {
-        m_type = BsonType::Null;
-    }
-}
-
-inline Bson::Bson(Timestamp v) noexcept
-{
-    if (!v.is_null()) {
-        m_type = BsonType::Timestamp;
-        date_val = v;
-    }
-    else {
-        m_type = BsonType::Null;
-    }
-}
-
-inline Bson::Bson(Decimal128 v)
-{
-    if (!v.is_null()) {
-        m_type = BsonType::Decimal128;
-        decimal_val = v;
-    }
-    else {
-        m_type = BsonType::Null;
-    }
-}
-
-inline Bson::Bson(ObjectId v) noexcept
-{
-    m_type = BsonType::ObjectId;
-    id_val = v;
-}
-
-inline Bson::Bson(Document* v) noexcept
-{
-    m_type = BsonType::Object;
-    document_val = v;
-}
-
-//inline Bson::Bson(Document& v) noexcept
-//{
-//    m_type = BsonType::Object;
-//    document_val = v;
-//}
-
-inline Bson::Bson(BsonArray* v) noexcept
-{
-    m_type = BsonType::Array;
-    array_val = v;
-}
-
 static void to_json(const Bson& bson, std::stringstream& ss)
 {
-    switch (bson.get_type())
-    {
-        case BsonType::Int32:
-            ss << "{" << "\"$numberInt\"" << ":" << '"' << bson.get_int32() << '"' << "}";
-            break;
-        case realm::BsonType::Double:
-            ss << "{" << "\"$numberDouble\"" << ":" << '"' << bson.get_double() << '"' << "}";
-            break;
-        case realm::BsonType::Int64:
-            ss << "{" << "\"$numberLong\"" << ":" << '"' << bson.get_int64() << '"' << "}";
-            break;
-        case realm::BsonType::Decimal128:
-            ss << "{" << "\"$numberDecimal\"" << ":" << '"' << bson.get_decimal() << '"' << "}";
-            break;
-        case realm::BsonType::ObjectId:
-            ss << "{" << "\"$oid\"" << ":" << '"' << bson.get_object_id() << '"' << "}";
-            break;
-        case realm::BsonType::Object:
-            ss << "{";
-            for (auto const& pair : bson.get_document())
-            {
-                ss << '"' << pair.first << "\":";
-                to_json(pair.second, ss);
-                ss << ",";
-            }
-            ss.seekp(-1, std::ios_base::end);
-            ss << "}";
-            break;
-        case realm::BsonType::Array:
-            ss << "[";
-            for (auto const& b : bson.get_array())
-            {
-                to_json(b, ss);
-                ss << ",";
-            }
-            ss.seekp(-1, std::ios_base::end);
-            ss << "]";
-            break;
-        case realm::BsonType::BinaryData:
-
-            break;
-        case realm::BsonType::Date:
-            break;
-        case realm::BsonType::Null:
-            ss << "null";
-            break;
-        case realm::BsonType::RegularExpression:
-
-            break;
-        case realm::BsonType::JavaScript:
-
-            break;
-        case realm::BsonType::JavaScriptWithScope:
-
-            break;
-        case realm::BsonType::Timestamp:
-            ss << "{\"$timestamp\":{\"t\":" << bson.get_timestamp().get_seconds() << ",\"i\":" << 1 << "}}";
-            break;
-        case realm::BsonType::MinKey:
-            ss << "{\"$minKey\": 1}";
-            break;
-        case realm::BsonType::MaxKey:
-            ss << "{\"$maxKey\": 1}";
-            break;
-        case realm::BsonType::String:
-            ss << '"' << bson.get_string() << '"';
-            break;
-        case realm::BsonType::Boolean:
-            ss << bson.get_bool();
-            break;
-    }
+//    switch (bson)
+//    {
+//        case BsonType::Int32:
+//            ss << "{" << "\"$numberInt\"" << ":" << '"' << bson.get_int32() << '"' << "}";
+//            break;
+//        case realm::BsonType::Double:
+//            ss << "{" << "\"$numberDouble\"" << ":" << '"' << bson.get_double() << '"' << "}";
+//            break;
+//        case realm::BsonType::Int64:
+//            ss << "{" << "\"$numberLong\"" << ":" << '"' << bson.get_int64() << '"' << "}";
+//            break;
+//        case realm::BsonType::Decimal128:
+//            ss << "{" << "\"$numberDecimal\"" << ":" << '"' << bson.get_decimal() << '"' << "}";
+//            break;
+//        case realm::BsonType::ObjectId:
+//            ss << "{" << "\"$oid\"" << ":" << '"' << bson.get_object_id() << '"' << "}";
+//            break;
+//        case realm::BsonType::Object:
+//            ss << "{";
+//            for (auto const& pair : bson.get_document())
+//            {
+//                ss << '"' << pair.first << "\":";
+//                to_json(pair.second, ss);
+//                ss << ",";
+//            }
+//            ss.seekp(-1, std::ios_base::end);
+//            ss << "}";
+//            break;
+//        case realm::BsonType::Array:
+//            ss << "[";
+//            for (auto const& b : bson.get_array())
+//            {
+//                to_json(b, ss);
+//                ss << ",";
+//            }
+//            ss.seekp(-1, std::ios_base::end);
+//            ss << "]";
+//            break;
+//        case realm::BsonType::BinaryData:
+//
+//            break;
+//        case realm::BsonType::Date:
+//            break;
+//        case realm::BsonType::Null:
+//            ss << "null";
+//            break;
+//        case realm::BsonType::RegularExpression:
+//
+//            break;
+//        case realm::BsonType::JavaScript:
+//
+//            break;
+//        case realm::BsonType::JavaScriptWithScope:
+//
+//            break;
+//        case realm::BsonType::Timestamp:
+//            ss << "{\"$timestamp\":{\"t\":" << bson.get_timestamp().get_seconds() << ",\"i\":" << 1 << "}}";
+//            break;
+//        case realm::BsonType::MinKey:
+//            ss << "{\"$minKey\": 1}";
+//            break;
+//        case realm::BsonType::MaxKey:
+//            ss << "{\"$maxKey\": 1}";
+//            break;
+//        case realm::BsonType::String:
+//            ss << '"' << bson.get_string() << '"';
+//            break;
+//        case realm::BsonType::Boolean:
+//            ss << bson.get_bool();
+//            break;
+//    }
 }
 
-inline std::string Document::to_json() const
+inline std::string to_json(const Bson& bson)
 {
     std::stringstream ss;
-    realm::to_json(Bson((Document*)this), ss);
+    bson::to_json(bson, ss);
     return ss.str();
 }
+} // namespace bson
 } // namespace realm
 
 

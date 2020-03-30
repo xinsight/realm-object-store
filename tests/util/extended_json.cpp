@@ -4,20 +4,20 @@
 #include "util/test_utils.hpp"
 #include "util/test_file.hpp"
 #include "util/bson.hpp"
+#include "util/extended_json.hpp"
+#include <variant>
 
 using namespace nlohmann;
 using namespace realm;
+using namespace bson;
 
 TEST_CASE("extjson", "[util]") {
+    SECTION("$numberInt") {
+        
+    }
+
     SECTION("basics") {
-//        "Array": [
-//            {"$numberInt": "1"},
-//            {"$numberInt": "2"},
-//            {"$numberInt": "3"},
-//            {"$numberInt": "4"},
-//            {"$numberInt": "5"}
-//        ],
-        auto document = Document::parse(R"P(
+        auto document = bson::parse(R"P(
           {
              "_id": {
                  "$oid": "57e193d7a9cc81b4027498b5"
@@ -60,7 +60,13 @@ TEST_CASE("extjson", "[util]") {
              "Subdocument": {
                  "foo": "bar"
              },
-
+            "Array": [
+                {"$numberInt": "1"},
+                {"$numberInt": "2"},
+                {"$numberInt": "3"},
+                {"$numberInt": "4"},
+                {"$numberInt": "5"}
+            ],
              "Timestamp": {
                  "$timestamp": { "t": 42, "i": 1 }
              },
@@ -87,14 +93,6 @@ TEST_CASE("extjson", "[util]") {
              },
              "True": true,
              "False": false,
-             "DBPointer": {
-                 "$dbPointer": {
-                     "$ref": "db.collection",
-                     "$id": {
-                         "$oid": "57e193d7a9cc81b4027498b1"
-                     }
-                 }
-             },
              "Minkey": {
                  "$minKey": 1
              },
@@ -104,27 +102,45 @@ TEST_CASE("extjson", "[util]") {
              "Null": null
         })P");
 
-        CHECK(document["_id"].get<realm::ObjectId>() == realm::ObjectId("57e193d7a9cc81b4027498b5"));
-        CHECK(document["String"] == "string");
-        CHECK(document["Int32"] == 42);
-        CHECK(document["Int64"] == (int64_t)42);
-        CHECK(document["Double"] == 42.42);
-        CHECK(document["SpecialFloat"] == nan("NaN"));
-        CHECK(document["Decimal"] == Decimal128(1234));
-        CHECK(document["Timestamp"] == Timestamp(42, 0));
-//        CHECK(document["Array"].get_array()[0] == 1);
-//        CHECK(document["Array"].get_array()[1] == 2);
-//        CHECK(document["Array"].get_array()[2] == 3);
-//        CHECK(document["Array"].get_array()[3] == 4);
-//        CHECK(document["Array"].get_array()[4] == 5);
-//        CHECK(document["Array"].get_array()[0] == 1);
-//        CHECK(document["Array"].get_array()[1] == 2);
-//        CHECK(document["Array"].get_array()[2] == 3);
-//        CHECK(document["Array"].get_array()[3] == 4);
-//        CHECK(document["Array"].get_array()[4] == 5);
-        CHECK(document["Subdocument"].get_document()["foo"] == "bar");
+//        auto get = [](const BsonDocument& document, const std::string& key) {
+//            auto it = std::find_if(document.begin(),
+//                                document.end(),
+//                                [key](std::pair<std::string, bson::Bson> pair) {
+//                return pair.first == key;
+//            });
+//            if (it != document.end()) {
+//                return (*it).second;
+//            }
+//            return Bson();
+//        };
 
-        std::cout<<document.to_json()<<std::endl;
+        
+//        std::find_if(document.begin(), document.end(), [](std::pair<std::string, bson::Bson> pair)
+//                     { return pair.first == "_id"; });
+        CHECK(std::get<realm::ObjectId>(document["_id"]) == realm::ObjectId("57e193d7a9cc81b4027498b5"));
+        auto subdocument = std::get<BsonDocument>(document["Subdocument"]);
+        std::cout<<std::get<StringData>(subdocument["foo"])<<std::endl;
+        CHECK(std::get<StringData>(std::get<BsonDocument>(document["Subdocument"])["foo"]) == "bar");
+//        CHECK(std::get<std::string>(document["String"]) == StringData("string"));
+//        CHECK(std::get<int32_t>(document["Int32"]) == 42);
+//        CHECK(std::get<int64_t>(document["Int64"]) == (int64_t)42);
+//        CHECK(std::get<double>(document["Double"]) == 42.42);
+//        CHECK(std::get<float>(document["SpecialFloat"]) == nan("NaN"));
+//        CHECK(std::get<realm::Decimal128>(document["Decimal"]) == Decimal128(1234));
+//        CHECK(std::get<realm::Timestamp>(document["Timestamp"]) == Timestamp(42, 0));
+//        CHECK(document["Array"].get_array()[0] == 1);
+//        CHECK(document["Array"].get_array()[1] == 2);
+//        CHECK(document["Array"].get_array()[2] == 3);
+//        CHECK(document["Array"].get_array()[3] == 4);
+//        CHECK(document["Array"].get_array()[4] == 5);
+//        CHECK(document["Array"].get_array()[0] == 1);
+//        CHECK(document["Array"].get_array()[1] == 2);
+//        CHECK(document["Array"].get_array()[2] == 3);
+//        CHECK(document["Array"].get_array()[3] == 4);
+//        CHECK(document["Array"].get_array()[4] == 5);
+//        CHECK(std::get<std::vector<std::pair<std::string, Bson>>>(document["Subdocument"])["foo"] == "bar");
+
+        std::cout<<bson::to_json(document)<<std::endl;
 //        auto reader = JsonReader("{ \"hi\": { \"$numberInt\": \"42\" } }");
 //
 //        reader.read_start_document();
