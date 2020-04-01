@@ -20,9 +20,7 @@ set(SOURCES
     impl/results_notifier.cpp
     impl/transact_log_handler.cpp
     impl/weak_realm_notifier.cpp
-    util/uuid.cpp
-    util/extended_json.cpp
-    util/bson.cpp)
+    util/uuid.cpp)
 
 set(HEADERS
     binding_callback_thread_observer.hpp
@@ -73,7 +71,7 @@ set(HEADERS
     util/event_loop_signal.hpp
     util/tagged_bool.hpp
     util/uuid.hpp
-    util/extended_json.hpp
+    util/bson.hpp
     util/bson.hpp)
 
 if(APPLE)
@@ -108,7 +106,7 @@ if(REALM_ENABLE_SYNC)
         sync/impl/sync_client.hpp
         sync/impl/sync_file.hpp
         sync/impl/sync_metadata.hpp
-        util/extended_json.hpp)
+        util/bson.hpp)
     list(APPEND SOURCES
         sync/app.cpp
         sync/app_credentials.cpp

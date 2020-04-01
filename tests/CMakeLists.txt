@@ -27,7 +27,7 @@ set(SOURCES
     util/event_loop.cpp
     util/test_file.cpp
     util/test_utils.cpp
-    util/extended_json.cpp
+    util/bson.cpp
 )
 
 
