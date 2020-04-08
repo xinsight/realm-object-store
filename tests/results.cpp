@@ -3228,7 +3228,7 @@ TEST_CASE("results: set property value on all objects", "[batch_updates]") {
 
         r.set_property_value(ctx, "string array", util::Any(AnyVec{"a"s, "b"s, "c"s}));
         check_array(table->get_column_key("string array"), StringData("a"), StringData("b"), StringData("c"));
- 
+
         r.set_property_value(ctx, "data array", util::Any(AnyVec{"d"s, "e"s, "f"s}));
         check_array(table->get_column_key("data array"), BinaryData("d",1), BinaryData("e",1), BinaryData("f",1));
 
@@ -3373,7 +3373,7 @@ TEST_CASE("Nabil") {
     config.schema_mode = SchemaMode::Automatic;
     config.schema = Schema{
       {"Player", {
-          {"score", PropertyType::Decimal|PropertyType::Nullable},
+          {"score", PropertyType::ObjectId|PropertyType::Nullable},
           {"game", PropertyType::Object|PropertyType::Nullable, "Game"},
       }},
       {"Game",
@@ -3393,15 +3393,14 @@ TEST_CASE("Nabil") {
         {"name", "KOTOR"s}
     }), CreatePolicy::UpdateAll);
     auto p1 = Object::create(d, rr, *rr->schema().find("Player"), util::Any(AnyDict{
-        {"score", Decimal128("1.23e45")},
+        {"score", ObjectId("000000000000000000000001")},
         {"game", game}
     }), CreatePolicy::UpdateAll);
     auto p2 = Object::create(d, rr, *rr->schema().find("Player"), util::Any(AnyDict{
-        {"score", Decimal128(realm::null())},
         {"game", game}
     }), CreatePolicy::UpdateAll);
     auto p3 = Object::create(d, rr, *rr->schema().find("Player"), util::Any(AnyDict{
-          {"score", Decimal128("1.11e45")},
+          {"score", ObjectId("000000000000000000000001")},
           {"game", game}
       }), CreatePolicy::UpdateAll);
     rr->commit_transaction();
@@ -3412,6 +3411,6 @@ TEST_CASE("Nabil") {
     Query* query = new Query(tableGame->where());
     LinkChain linkChain(query->get_table());
     linkChain.backlink(t_player_ref, tablePlayer->get_column_key("game"));
-    size_t count = query->and_query(linkChain.column<Decimal128>(tablePlayer->get_column_key("score")) == realm::null()).count();
-    std::cout << "QUERY COUNT null scores: " << count << std::endl;
+    size_t count = query->and_query(linkChain.column<ObjectId>(tablePlayer->get_column_key("score")) == realm::null()).count();
+    std::cout << "QUERY COUNT null scores:: " << count << std::endl;
 }
