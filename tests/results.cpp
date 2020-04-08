@@ -3366,3 +3366,52 @@ TEST_CASE("results: limit", "[limit]") {
         REQUIRE_THROWS_AS(limited.filter(table->where()), Results::UnimplementedOperationException);
     }
 }
+
+TEST_CASE("Nabil") {
+    InMemoryTestFile config;
+    config.automatic_change_notifications = false;
+    config.schema_mode = SchemaMode::Automatic;
+    config.schema = Schema{
+      {"Player", {
+          {"score", PropertyType::Decimal|PropertyType::Nullable},
+          {"game", PropertyType::Object|PropertyType::Nullable, "Game"},
+      }},
+      {"Game",
+        {
+          {"name", PropertyType::String},
+        },
+        {
+            {"players", PropertyType::LinkingObjects|PropertyType::Array, "Player", "game"},
+        }
+      },
+    };
+    //
+    auto rr = Realm::get_shared_realm(config);
+    TestContext d(rr);
+    rr->begin_transaction();
+    auto game = Object::create(d, rr, *rr->schema().find("Game"), util::Any(AnyDict{
+        {"name", "KOTOR"s}
+    }), CreatePolicy::UpdateAll);
+    auto p1 = Object::create(d, rr, *rr->schema().find("Player"), util::Any(AnyDict{
+        {"score", Decimal128("1.23e45")},
+        {"game", game}
+    }), CreatePolicy::UpdateAll);
+    auto p2 = Object::create(d, rr, *rr->schema().find("Player"), util::Any(AnyDict{
+        {"score", Decimal128(realm::null())},
+        {"game", game}
+    }), CreatePolicy::UpdateAll);
+    auto p3 = Object::create(d, rr, *rr->schema().find("Player"), util::Any(AnyDict{
+          {"score", Decimal128("1.11e45")},
+          {"game", game}
+      }), CreatePolicy::UpdateAll);
+    rr->commit_transaction();
+    auto tablePlayer = rr->read_group().get_table("class_Player");
+    auto tableGame = rr->read_group().get_table("class_Game");
+    const Table& t_game_ref = *(tableGame);
+    const Table& t_player_ref = *(tablePlayer);
+    Query* query = new Query(tableGame->where());
+    LinkChain linkChain(query->get_table());
+    linkChain.backlink(t_player_ref, tablePlayer->get_column_key("game"));
+    size_t count = query->and_query(linkChain.column<Decimal128>(tablePlayer->get_column_key("score")) == realm::null()).count();
+    std::cout << "QUERY COUNT null scores: " << count << std::endl;
+}
