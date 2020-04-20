@@ -76,13 +76,14 @@ ObjectSchema const& List::get_object_schema() const
     verify_attached();
 
     REALM_ASSERT(get_type() == PropertyType::Object);
-    if (!m_object_schema) {
+    auto object_schema = m_object_schema.load();
+    if (!object_schema) {
         auto object_type = object_name(*static_cast<LnkLst&>(*m_list_base).get_target_table());
         auto it = m_realm->schema().find(object_type);
         REALM_ASSERT(it != m_realm->schema().end());
-        m_object_schema = &*it;
+        m_object_schema = object_schema = &*it;
     }
-    return *m_object_schema;
+    return *object_schema;
 }
 
 Query List::get_query() const
@@ -330,7 +331,9 @@ Results List::filter(Query q) const
 Results List::as_results() const
 {
     verify_attached();
-    return (m_type == PropertyType::Object) ? Results(m_realm, std::static_pointer_cast<LnkLst>(m_list_base)) : Results(m_realm, m_list_base);
+    return m_type == PropertyType::Object
+        ? Results(m_realm, std::static_pointer_cast<LnkLst>(m_list_base))
+        : Results(m_realm, m_list_base);
 }
 
 Results List::snapshot() const
@@ -371,7 +374,7 @@ struct If<false> {
     static auto call(T, Then&&, Else&& fn) { return fn(); }
 };
 
-util::Optional<Mixed> List::max(ColKey col)
+util::Optional<Mixed> List::max(ColKey col) const
 {
     if (get_type() == PropertyType::Object)
         return as_results().max(col);
@@ -383,7 +386,7 @@ util::Optional<Mixed> List::max(ColKey col)
     return out_ndx == not_found ? none : make_optional(result);
 }
 
-util::Optional<Mixed> List::min(ColKey col)
+util::Optional<Mixed> List::min(ColKey col) const
 {
     if (get_type() == PropertyType::Object)
         return as_results().min(col);
@@ -396,7 +399,7 @@ util::Optional<Mixed> List::min(ColKey col)
     return out_ndx == not_found ? none : make_optional(result);
 }
 
-Mixed List::sum(ColKey col)
+Mixed List::sum(ColKey col) const
 {
     if (get_type() == PropertyType::Object)
         return *as_results().sum(col);
@@ -408,7 +411,7 @@ Mixed List::sum(ColKey col)
     return result;
 }
 
-util::Optional<double> List::average(ColKey col)
+util::Optional<double> List::average(ColKey col) const
 {
     if (get_type() == PropertyType::Object)
         return as_results().average(col);
@@ -446,12 +449,12 @@ NotificationToken List::add_notification_callback(CollectionChangeCallback cb) &
     return {m_notifier, m_notifier->add_callback(std::move(cb))};
 }
 
-List List::freeze(std::shared_ptr<Realm> frozen_realm)
+List List::freeze(std::shared_ptr<Realm> const& frozen_realm) const
 {
-    return List(frozen_realm, *frozen_realm->transaction().import_copy_of(*m_list_base));
+    return List(frozen_realm, *frozen_realm->import_copy_of(*m_list_base));
 }
 
-bool List::is_frozen()
+bool List::is_frozen() const noexcept
 {
     return m_realm->is_frozen();
 }

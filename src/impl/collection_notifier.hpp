@@ -21,6 +21,7 @@
 
 #include "object_changeset.hpp"
 #include "impl/collection_change_builder.hpp"
+#include "util/checked_mutex.hpp"
 
 #include <realm/util/assert.hpp>
 #include <realm/version_id.hpp>
@@ -51,6 +52,7 @@ struct ListChangeInfo {
 
 // FIXME: this should be in core
 using TableKeyType = decltype(TableKey::value);
+using ObjKeyType = decltype(ObjKey::value);
 
 struct TransactionChangeInfo {
     std::vector<ListChangeInfo> lists;
@@ -84,7 +86,7 @@ private:
     Table const& m_root_table;
     const TableKey m_root_table_key;
     ObjectChangeSet const* const m_root_object_changes;
-    std::unordered_map<TableKeyType, IndexSet> m_not_modified;
+    std::unordered_map<TableKeyType, std::unordered_set<ObjKeyType>> m_not_modified;
     std::vector<RelatedTable> const& m_related_tables;
 
     struct Path {
@@ -94,7 +96,7 @@ private:
     };
     std::array<Path, 4> m_current_path;
 
-    bool check_row(Table const& table, int64_t obj_key, size_t depth = 0);
+    bool check_row(Table const& table, ObjKeyType obj_key, size_t depth = 0);
     bool check_outgoing_links(TableKey table_key, Table const& table,
                               int64_t obj_key, size_t depth = 0);
 };
@@ -119,13 +121,13 @@ public:
     // Add a callback to be called each time the collection changes
     // This can only be called from the target collection's thread
     // Returns a token which can be passed to remove_callback()
-    uint64_t add_callback(CollectionChangeCallback callback);
+    uint64_t add_callback(CollectionChangeCallback callback) REQUIRES(!m_callback_mutex);
     // Remove a previously added token. The token is no longer valid after
     // calling this function and must not be used again. This function can be
     // called from any thread.
-    void remove_callback(uint64_t token);
+    void remove_callback(uint64_t token) REQUIRES(!m_callback_mutex);
 
-    void suppress_next_notification(uint64_t token);
+    void suppress_next_notification(uint64_t token) REQUIRES(!m_callback_mutex);
 
     // ------------------------------------------------------------------------
     // API for RealmCoordinator to manage running things and calling callbacks
@@ -147,16 +149,16 @@ public:
     // Prepare to deliver the new collection and call callbacks.
     // Returns whether or not it has anything to deliver.
     // precondition: RealmCoordinator::m_notifier_mutex is locked
-    bool package_for_delivery();
+    bool package_for_delivery() REQUIRES(!m_callback_mutex);
 
     // Pass the given error to all registered callbacks, then remove them
     // precondition: RealmCoordinator::m_notifier_mutex is unlocked
-    void deliver_error(std::exception_ptr);
+    void deliver_error(std::exception_ptr) REQUIRES(!m_callback_mutex);
 
     // Call each of the given callbacks with the changesets prepared by package_for_delivery()
     // precondition: RealmCoordinator::m_notifier_mutex is unlocked
-    void before_advance();
-    void after_advance();
+    void before_advance() REQUIRES(!m_callback_mutex);
+    void after_advance() REQUIRES(!m_callback_mutex);
 
     bool is_alive() const noexcept;
 
@@ -176,14 +178,14 @@ public:
     virtual void run() = 0;
 
     // precondition: RealmCoordinator::m_notifier_mutex is locked
-    void prepare_handover();
+    void prepare_handover() REQUIRES(!m_callback_mutex);
 
     template <typename T>
     class Handle;
 
     bool have_callbacks() const noexcept { return m_have_callbacks; }
 protected:
-    void add_changes(CollectionChangeBuilder change);
+    void add_changes(CollectionChangeBuilder change) REQUIRES(!m_callback_mutex);
     void set_table(ConstTableRef table);
     std::unique_lock<std::mutex> lock_target();
     Transaction& source_shared_group();
@@ -221,7 +223,7 @@ private:
 
     // Currently registered callbacks and a mutex which must always be held
     // while doing anything with them or m_callback_index
-    std::mutex m_callback_mutex;
+    util::CheckedMutex m_callback_mutex;
     std::vector<Callback> m_callbacks;
 
     // Cached value for if m_callbacks is empty, needed to avoid deadlocks in
@@ -242,7 +244,7 @@ private:
     uint64_t m_next_token = 0;
 
     template<typename Fn>
-    void for_each_callback(Fn&& fn);
+    void for_each_callback(Fn&& fn) REQUIRES(!m_callback_mutex);
 
     std::vector<Callback>::iterator find_callback(uint64_t token);
 };
@@ -275,7 +277,8 @@ public:
         return *this;
     }
 
-    Handle& operator=(std::shared_ptr<T>&& other)
+    template<typename U>
+    Handle& operator=(std::shared_ptr<U>&& other)
     {
         reset();
         std::shared_ptr<T>::operator=(std::move(other));
