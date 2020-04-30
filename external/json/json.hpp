@@ -20810,7 +20810,6 @@ class basic_json
     @since version 3.2.0
     */
     template <typename SAX>
-    JSON_HEDLEY_NON_NULL(2)
     static bool sax_parse(detail::input_adapter&& i, SAX* sax,
                           input_format_t format = input_format_t::json,
                           const bool strict = true)
