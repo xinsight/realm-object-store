@@ -303,7 +303,10 @@ private:
         { "collection" , name }
     };
     
+    std::unique_ptr<AppServiceClient> m_service;
+
     const AppServiceClient& m_service;
+    AppServiceClient& m_service;
 };
 
 } // namespace app

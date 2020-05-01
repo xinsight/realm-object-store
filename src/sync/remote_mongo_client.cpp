@@ -34,3 +34,4 @@ RemoteMongoDatabase RemoteMongoClient::db(const std::string& name) const
 
 } // namespace app
 } // namespace realm
+
