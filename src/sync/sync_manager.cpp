@@ -24,6 +24,7 @@
 #include "sync/sync_session.hpp"
 #include "sync/sync_user.hpp"
 #include "sync/app.hpp"
+#include "util/uuid.hpp"
 
 #include <realm/util/sha_crypto.hpp>
 #include <realm/util/hex_dump.hpp>
@@ -80,6 +81,9 @@ void SyncManager::configure(SyncClientConfig config, util::Optional<app::App::Co
 
         // Set up the metadata manager, and perform initial loading/purging work.
         if (m_metadata_manager || m_config.metadata_mode == MetadataMode::NoMetadata) {
+            // No metadata means we use a new client uuid each time
+            if (!m_metadata_manager)
+                m_client_uuid = util::uuid_string();
             return;
         }
 
