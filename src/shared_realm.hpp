@@ -323,6 +323,7 @@ public:
     void write_copy(StringData path, BinaryData encryption_key);
     OwnedBinaryData write_copy();
 
+    bool is_on_current_thread() const;
     void verify_thread() const;
     void verify_in_write() const;
     void verify_open() const;

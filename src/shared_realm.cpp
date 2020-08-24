@@ -625,13 +625,18 @@ static void check_write(const Realm* realm)
     }
 }
 
-void Realm::verify_thread() const
+bool Realm::is_on_current_thread() const
 {
     if (!m_execution_context.contains<std::thread::id>())
-        return;
+        return true;
 
     auto thread_id = m_execution_context.get<std::thread::id>();
-    if (thread_id != std::this_thread::get_id())
+    return thread_id == std::this_thread::get_id();
+}
+
+void Realm::verify_thread() const
+{
+    if (!is_on_current_thread())
         throw IncorrectThreadException();
 }
 
